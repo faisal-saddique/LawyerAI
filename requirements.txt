@@ -1,0 +1,11 @@
+langchain==0.0.251
+pandas==2.0.3
+pdf2image==1.16.3
+Pillow==9.5.0
+Pillow==10.0.0
+pinecone_client==2.2.1
+PyMuPDF==1.22.5
+pytesseract==0.3.10
+python-dotenv==1.0.0
+streamlit==1.24.0
+tiktoken==0.3.3

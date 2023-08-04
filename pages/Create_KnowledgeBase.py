@@ -6,7 +6,7 @@ from utilities.utils import (
     parse_xlsx,
     parse_csv,
     num_tokens_from_string,
-    add_vectors_to_FAISS
+    update_vectorstore
 )
 from dotenv import load_dotenv
 
@@ -72,5 +72,5 @@ if uploaded_files:
     st.write(f"Number of tokens: \n{no_of_tokens}")
 
     with st.spinner("Creating Index..."):
-        st.session_state.index = add_vectors_to_FAISS(chunked_docs=chunked_docs)
+        st.session_state.index = update_vectorstore(chunked_docs=chunked_docs)
         st.success("Done! Please headover to chatbot to start interacting with your data.")

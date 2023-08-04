@@ -9,7 +9,7 @@ from utilities.sidebar import sidebar
 
 sidebar()
 
-st.title("Ask Docs AI 🤖")
+st.title("Lawyer AI 🤖")
 
 # Load environment variables from .env file
 load_dotenv()

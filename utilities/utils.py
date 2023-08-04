@@ -142,28 +142,6 @@ def refined_docs(docs):
 
     return text_splitter.split_documents(docs)
 
-    # new_chunks = None
-
-    # for obj in docs:
-    #     try:
-    #         if new_chunks is None:
-    #             
-    #             new_chunks = text_splitter.create_documents([obj.page_content], metadatas=[obj.metadata])
-    #         else:
-    #             new_chunks = new_chunks + text_splitter.create_documents([obj.page_content], metadatas=[obj.metadata])
-    #     except:
-    #         print(f"A potential error caused by chunk: {obj}")
-    #         pass
-
-    # for object in new_chunks:
-    #     try:
-    #         object.metadata["filename_key"] = convert_filename_to_key(os.path.split(object.metadata['source'])[-1])
-    #         if "text" in object.metadata:
-    #             del object.metadata["text"]
-    #     except Exception as oops:
-    #         print(f"Object causing error is: {object}")
-    # return new_chunks
-
 def num_tokens_from_string(chunked_docs: List[Document]) -> int:
 
     string = ""
@@ -176,15 +154,21 @@ def num_tokens_from_string(chunked_docs: List[Document]) -> int:
     num_tokens = len(encoding.encode(string))
     return num_tokens
 
-def create_index_from_docs(docs: List[Document]) -> VectorStore:
-    """Embeds a list of Documents and returns a FAISS index"""
+def update_vectorstore(docs: List[Document]) -> VectorStore:
+    """ Returns the updated FAISS index"""
     
-    # Embed the chunks
     embeddings = OpenAIEmbeddings()  # type: ignore
-    
     index = FAISS.from_documents(docs, embeddings)
 
-    return index
+    try:
+        existing_index = FAISS.load_local("law_docs_index", embeddings)
+        existing_index.merge_from(index)
+        existing_index.save_local("law_docs_index")
+        return existing_index
+    except Exception as e:
+        print(f"Index doesn't exist. Starting fresh...")
+        index.save_local("law_docs_index")
+        return index
 
 def parse_readable_pdf(file_path):  
     pdf_loader = PyMuPDFLoader(file_path)
