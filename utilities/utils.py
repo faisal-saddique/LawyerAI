@@ -1,49 +1,19 @@
 import os
-from langchain.document_loaders import Docx2txtLoader
-from typing import Any, Dict, List, Union
-from langchain.document_loaders import PyMuPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.chains.qa_with_sources import load_qa_with_sources_chain
-from langchain.llms import OpenAI
-from langchain.vectorstores import VectorStore
+from typing import List
 from langchain.vectorstores.faiss import FAISS
-from langchain.document_loaders.csv_loader import CSVLoader
 from langchain.embeddings import OpenAIEmbeddings
-from .prompts import STUFF_PROMPT
-import pandas as pd
-import tempfile
 import tiktoken
-import fitz  # PyMuPDF
-import re
-import pytesseract
-from PIL import Image
-from pdf2image import convert_from_path
 from langchain.docstore.document import Document
 import unicodedata
 import pinecone
 from langchain.vectorstores import FAISS
-from langchain.document_loaders import JSONLoader
-
-# pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
-add_path_for_poppler = False
+from langchain.vectorstores import Pinecone
+import pinecone
 
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-
-# Set the environment variable
-os.environ['OPENAI_API_KEY'] = os.getenv('OPENAI_API_KEY')
-
-def add_vectors_to_FAISS(chunked_docs):
-    """Embeds a list of Documents and adds them to a Pinecone Index"""
-    
-    # Embed the chunks
-    embeddings = OpenAIEmbeddings()  # type: ignore
-
-    index = FAISS.from_documents(chunked_docs,embeddings)
-
-    return index
 
 def convert_filename_to_key(input_string):
     # Normalize string to decomposed form (separate characters and diacritics)
@@ -78,70 +48,6 @@ def get_all_filenames_and_their_extensions(source_folder):
 
     return file_list
 
-def parse_docx(content):
-    # Assuming the content is in bytes format, save it temporarily
-    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as temp_file:
-        temp_file.write(content)
-        temp_file_path = temp_file.name
-
-    loader = Docx2txtLoader(file_path=temp_file_path)
-    data = loader.load()
-    # data = [re.sub(r"\n\s*\n", "\n\n", obj.page_content) for obj in data]
-    for d in data:
-        d.page_content = re.sub(r"\n\s*\n", "\n\n", d.page_content)
-    return data
-
-def parse_xlsx(content):
-    # Assuming the content is in bytes format, save it temporarily
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as temp_file:
-        temp_file.write(content)
-        temp_file_path = temp_file.name
-
-    # Read the Excel file
-    df = pd.read_excel(temp_file_path)
-
-    # Convert DataFrame to a CSV string
-    csv_string = df.to_csv(index=False, encoding='utf-8')
-
-    # Create a temporary file in memory
-    with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as temp_file:
-        # Write the CSV string to the temporary file
-        temp_file.write(csv_string.encode())
-        temp_file.flush()
-
-        # Step 2: Load the data using CSVLoader
-        loader = CSVLoader(file_path=temp_file.name,encoding='utf-8')
-        data = loader.load()
-        for doc in data:
-            doc.metadata["source"] = temp_file_path
-            
-    return data
-
-def parse_csv(content):
-    # Create a temporary file in memory
-    with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as temp_file:
-        # Write the CSV string to the temporary file
-        temp_file.write(content)
-        temp_file.flush()
-
-        # Step 2: Load the data using CSVLoader
-        loader = CSVLoader(file_path=temp_file.name,encoding='utf-8')
-        data = loader.load()
-        for doc in data:
-            doc.metadata["source"] = temp_file.name
-            
-    return data
-
-def refined_docs(docs):
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 1600, # You can play around with this parameter to adjust the length of each chunk
-        chunk_overlap  = 10,
-        separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
-        length_function = len,
-    )
-
-    return text_splitter.split_documents(docs)
-
 def num_tokens_from_string(chunked_docs: List[Document]) -> int:
 
     string = ""
@@ -154,78 +60,29 @@ def num_tokens_from_string(chunked_docs: List[Document]) -> int:
     num_tokens = len(encoding.encode(string))
     return num_tokens
 
-def update_vectorstore(docs: List[Document]) -> VectorStore:
-    """ Returns the updated FAISS index"""
+def update_vectorstore_PINECONE(docs: List[Document]):
+    """Embeds a list of Documents and adds them to a Pinecone Index"""
+    
+    # Embed the chunks
+    embeddings = OpenAIEmbeddings()  # type: ignore
+
+    pinecone.init(api_key=os.environ["PINECONE_API_KEY"],environment=os.environ["PINECONE_ENVIRONMENT"])
+
+    Pinecone.from_documents(docs,embeddings,index_name=os.environ["PINECONE_INDEX_NAME"],namespace="")
+
+def update_vectorstore_FAISS(docs: List[Document]):
+    """ Updates the FAISS index"""
     
     embeddings = OpenAIEmbeddings()  # type: ignore
     index = FAISS.from_documents(docs, embeddings)
-
     try:
         existing_index = FAISS.load_local("law_docs_index", embeddings)
         existing_index.merge_from(index)
         existing_index.save_local("law_docs_index")
-        return existing_index
     except Exception as e:
         print(f"Index doesn't exist. Starting fresh...")
         index.save_local("law_docs_index")
-        return index
 
-def parse_readable_pdf(file_path):  
-    pdf_loader = PyMuPDFLoader(file_path)
-    pdf_data = pdf_loader.load()  # Load PDF file
-
-    for doc in pdf_data:
-        # Merge hyphenated words
-        doc.page_content = re.sub(r"(\w+)-\n(\w+)", r"\1\2", doc.page_content)
-        # Fix newlines in the middle of sentences
-        doc.page_content = re.sub(r"(?<!\n\s)\n(?!\s\n)", " ", doc.page_content.strip())
-        # Remove multiple newlines
-        doc.page_content = re.sub(r"\n\s*\n", "\n\n", doc.page_content)
-
-    return pdf_data
-
-def check_if_pdf_is_scanned(file_path):
-    doc = fitz.open(file_path)
-    text = ""
-    for page in doc:
-        # Merge hyphenated words
-        content = page.get_text()
-        text += content
-
-    if text:
-        return True
-    else:
-        return False
-    
-def parse_pdf(content):
-
-    # Assuming the content is in bytes format, save it temporarily
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
-        temp_file.write(content)
-        temp_file_path = temp_file.name
-
-    if check_if_pdf_is_scanned(file_path=temp_file_path):
-        pdf_data = parse_readable_pdf(temp_file_path)
-        print("PDF is a text-readable one!")
-        return pdf_data
-    else:
-        print("PDF is a scanned one!")
-        docs = []
-        if add_path_for_poppler:
-            images = convert_from_path(temp_file_path, poppler_path="C:\\Program Files\\poppler-0.68.0\\bin")
-        else:
-            images = convert_from_path(temp_file_path)
-        for i in range(len(images)):
-            content = pytesseract.image_to_string(images[i], lang='por')
-            content = re.sub(r"(\w+)-\n(\w+)", r"\1\2", content)
-            # Fix newlines in the middle of sentences
-            content = re.sub(r"(?<!\n\s)\n(?!\s\n)", " ", content.strip())
-            # Remove multiple newlines
-            content = re.sub(r"\n\s*\n", "\n\n", content)
-            docs.append(Document(page_content=content, metadata={"path": temp_file_path, "page": i}))
-
-        return docs
-    
 def remove_files_from_pinecone(path):
     
     pinecone.init(api_key=os.environ["PINECONE_API_KEY"],environment=os.environ["PINECONE_ENVIRONMENT"])

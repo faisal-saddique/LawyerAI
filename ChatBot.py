@@ -1,75 +1,143 @@
-from langchain.prompts import SystemMessagePromptTemplate, HumanMessagePromptTemplate, ChatPromptTemplate
-from langchain.chat_models import ChatOpenAI
+import utilities.chat_utilities as chat_utilities
+from langchain.vectorstores import Pinecone
 from dotenv import load_dotenv
 import os
-import time
-from langchain.embeddings import OpenAIEmbeddings
+from langchain.embeddings.openai import OpenAIEmbeddings
 import streamlit as st
 from utilities.sidebar import sidebar
+from utilities.streaming import StreamHandler
+import pinecone
+import openai
+import tiktoken
+import json
 
 sidebar()
 
-st.title("Lawyer AI 🤖")
+st.title("LawyerAI 🎓🤖")
 
 # Load environment variables from .env file
 load_dotenv()
 
 embeddings = OpenAIEmbeddings()
 
-llm = ChatOpenAI(
-    model_name=os.getenv('MODEL_NAME') or "gpt-3.5-turbo", # type: ignore
-    temperature=os.getenv('MODEL_TEMPERATURE') or .3,
-    max_tokens=os.getenv('MAX_TOKENS') or 1500
-)
+class CustomDataChatbot:
 
-template = f"{os.getenv('OPENAI_GPT_INSTRUCTIONS')}" + '\n```{documents}```'
+    def __init__(self):
+        self.openai_model = "gpt-3.5-turbo"
+        if "chat_messages" not in st.session_state:
+            st.session_state.chat_messages = []
+        openai.api_key = os.getenv("OPENAI_API_KEY")
 
-system_message_prompt = SystemMessagePromptTemplate.from_template(template)
+    # Function to count the number of tokens in a text string
+    def num_tokens_from_string(self, string: str, encoding_name: str = "cl100k_base") -> int:
+        encoding = tiktoken.get_encoding(encoding_name)
+        num_tokens = len(encoding.encode(string))
+        return num_tokens
 
-human_template = '{question}'
-human_message_prompt = HumanMessagePromptTemplate.from_template(
-    human_template)
-chat_prompt = ChatPromptTemplate.from_messages(
-    [system_message_prompt, human_message_prompt])
+    # @st.cache_resource
+    def get_vectorstore_instance(self):
 
-# chain = LLMChain(llm=llm, prompt=chat_prompt)
+        pinecone.init(api_key=os.environ["PINECONE_API_KEY"],environment=os.environ["PINECONE_ENVIRONMENT"])
+        vectordb = Pinecone.from_existing_index(os.environ["PINECONE_INDEX_NAME"], embeddings, namespace="notion_db")
 
-if "index" in st.session_state:
-    query = st.text_input('Enter a question: ')
+        return vectordb
 
-    if query:
-        start_time = time.perf_counter()
+    # Function to manage chat history by adding messages and handling token limits
+    def manage_chat_history(self, role, content):
 
-        st.write("Starting the search operation...")
-        
-        docs = st.session_state.index.similarity_search(query, k=3)
+        st.session_state.chat_messages.append({"role": f"{role}", "content": f"{content}"})
 
-        # st.write(num_tokens_from_string(docs))  
+        # Count the number of tokens used in the chat history
+        chat_history_tokens = self.num_tokens_from_string(json.dumps(st.session_state.chat_messages))
+        print(f"\nChat history consumes {chat_history_tokens} tokens up till now\n")
+
+        # Check if the token limit (3500 tokens) is about to be hit, if yes, remove extra messages
+        if chat_history_tokens >= 3500:
+            print("Avoiding token limit hit, removing extra chat messages...")
+            # Keep only the system prompt and last 2 messages to reduce token usage
+            messages = [st.session_state.chat_messages[0]] + st.session_state.chat_messages[-2:]
+
+    # Function to get the AI assistant's response using OpenAI's ChatCompletion API
+    def get_gpt_response(self, messages):
+        # Make a request to the GPT-3.5 Turbo model to get the response
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0,
+            max_tokens=1024,
+            stream=True
+        )
+
+        # Extract and return the content of the AI assistant's response
+        return response
+
+    @st.spinner('Analyzing documents..')
+    # Function to retrieve matching chunks from the vector store for a given query
+    def get_matching_chunks_from_vecstore(self, vectorstore, query: str):
+
+        # Perform similarity search in the vector store and get the top 3 most similar documents
+        docs = vectorstore.similarity_search(query, k=4)
 
         with st.expander("Show Matched Chunks"):
             for idx, doc in enumerate(docs):
                 st.write(f"**Chunk # {idx+1}**")
-                st.write(f"*{doc.page_content}*")
+                st.text(f"{doc.page_content}")
                 st.json(doc.metadata, expanded=False)
 
-        st.write("Found relevant docs, proceeding to make the query...")
+        # Prepare a formatted string with the content of each document
+        context = "\n--------------------------------------\n"
+        for doc in docs:
+            context += doc.page_content + "\n--------------------------------------\n"
 
-        # You can uncomment the line below and disable the answer fetching from the other method to jump to chain method, which you were using initially
-        # answer = chain.run(documents=docs, question=query)
+        return context
 
-        # This section uses chat completion models to generate the results. You can change the model to text-ada-001 or other models to compare the results from them
-        # llm_light = OpenAI(model_name="text-davinci-003",
-        #                     temperature=settings.OPENAI_TEMPERATURE, openai_api_key=settings.OPENAI_API_KEY)
-        # answer = llm_light(
-        # f"{settings.OPENAI_GPT_INSTRUCTIONS}/n{query}/n/nUse this context only:/n{docs}")
+    # Function to create an input prompt for the chat with the AI assistant
+    def create_input_prompt(self, vectorstore, query: str):
 
-        # You can uncomment the line below and disable the answer fetching from the other method to jump to GPT-4 chat mode
-        answer = llm(chat_prompt.format_prompt(documents=[doc.page_content for doc in docs], question=query).to_messages()).content
+        # Get the relevant context based on the query from the vector store
+        context = self.get_matching_chunks_from_vecstore(vectorstore=vectorstore, query=query)
 
-        end_time = time.perf_counter()
-        st.success(answer)
-        elapsed_time = end_time - start_time
-        st.write(f"\nElapsed time: {round(float(elapsed_time), 3)} secs")
+        # Combine the context and query to form the input prompt for the AI assistant
+        prompt = f"""Answer the question in your own words as truthfully as possible from the context given to you.\nIf you do not know the answer to the question, simply respond with "I don't know. Can you ask another question".\nIf questions are asked where there is no relevant context available, simply respond with "I don't know. Please ask a question relevant to the documents"\n\nCONTEXT: {context}\n\nHUMAN: {query}\nASSISTANT:"""
 
-else:
-    st.warning("Please create a knowledgeBase first!")
+        return prompt
+    
+    @chat_utilities.enable_chat_history
+    def main(self):
+
+        user_query = st.chat_input(placeholder="Ask me anything!")
+
+        # check 
+        # Start the conversation by introducing the AI assistant
+        self.manage_chat_history("system", "You are a helpful assistant.")
+
+        if user_query:
+            
+            vectorstore = self.get_vectorstore_instance()
+
+            chat_utilities.display_msg(user_query, 'user')
+
+            with st.chat_message("assistant",avatar="https://icon-library.com/images/law-icon-png/law-icon-png-3.jpg"):
+                
+                query = self.create_input_prompt(vectorstore=vectorstore,query=user_query)
+
+                # Add user's query to the chat history
+                self.manage_chat_history("user", query)
+
+                # Get the AI assistant's response
+                response = self.get_gpt_response(messages=st.session_state.chat_messages)
+
+                # def stream_response(response):
+                st_cb = StreamHandler(st.empty())
+                resp_for_chat_history = ""
+                for chunk in response:
+                    if 'delta' in chunk['choices'][0] and 'content' in chunk['choices'][0]['delta']:
+                        resp_for_chat_history += chunk['choices'][0]['delta']['content']
+                        st_cb.on_llm_new_token(chunk['choices'][0]['delta']['content'])
+
+                st.session_state.messages.append({"role": "assistant", "content": resp_for_chat_history})
+
+
+if __name__ == "__main__":
+    obj = CustomDataChatbot()
+    obj.main()
