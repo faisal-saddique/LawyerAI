@@ -7,6 +7,7 @@ __pycache__/
 *.so
 data
 data2
+
 # Distribution / packaging
 .Python
 build/
