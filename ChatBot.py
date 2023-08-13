@@ -1,4 +1,4 @@
-import utilities.chat_utilities
+from utilities import chat_utilities
 from langchain.vectorstores import Pinecone
 from dotenv import load_dotenv
 import os
