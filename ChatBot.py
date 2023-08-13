@@ -117,7 +117,7 @@ class CustomDataChatbot:
 
             chat_utilities.display_msg(user_query, 'user')
 
-            with st.chat_message("assistant",avatar="https://imgtr.ee/images/2023/08/09/3e16c073fb5ee87ab9770afa1ed06755.png"):
+            with st.chat_message("assistant",avatar="https://icon-library.com/images/law-icon-png/law-icon-png-3.jpg"):
                 
                 query = self.create_input_prompt(vectorstore=vectorstore,query=user_query)
 
