@@ -18,7 +18,7 @@ from dotenv import load_dotenv # For loading environment variables from .env fil
 load_dotenv()
  
 # Replace with the name of the directory carrying your data  
-data_directory = "data"
+data_directory = "E:\\DESKTOP\\FreeLanceProjects\\muhammad_thaqib\\LawyerAI\\data"
 
 # Load your documents from different sources
 def get_documents():

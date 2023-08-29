@@ -1,6 +1,6 @@
-langchain==0.0.263
+langchain==0.0.275
+openai==0.27.9
 pinecone_client==2.2.2
 python-dotenv==1.0.0
 streamlit==1.25.0
 tiktoken==0.3.1
-openai

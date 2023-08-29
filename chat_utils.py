@@ -1,4 +1,7 @@
+import os
+import random
 import streamlit as st
+import uuid 
 
 #decorator
 def enable_chat_history(func):
@@ -19,7 +22,15 @@ def enable_chat_history(func):
         st.session_state["messages"] = [{"role": "assistant", "content": "How can I help you?"}]
     for msg in st.session_state["messages"]:
         if msg["role"] == "assistant":
-            st.chat_message(msg["role"],avatar="https://icon-library.com/images/law-icon-png/law-icon-png-3.jpg").write(msg["content"])
+            if "index" in st.session_state:
+            # print(msg["content"])
+                with st.chat_message(msg["role"],avatar="https://icon-library.com/images/law-icon-png/law-icon-png-3.jpg"):
+                    st.write(msg["content"])
+                    if "matching_docs" in msg:
+                        with st.expander("See sources"):
+                            for doc in msg['matching_docs']:
+                                st.info(f"\nPage Content: {doc.page_content}")
+                                st.json(doc.metadata, expanded= False)
         else:
             st.chat_message(msg["role"]).write(msg["content"])
 
@@ -28,6 +39,7 @@ def enable_chat_history(func):
     return execute
 
 def display_msg(msg, author):
+
     """Method to display message on the UI
 
     Args:
